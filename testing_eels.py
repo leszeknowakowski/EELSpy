@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
         self.spectrum_subwindow = None
         self.spectrum_plot = None
         self.data = None
-        self.selected_pixel = None  # Store the selected pixel for highlighting
+        self.selected_pixel_roi = None  # Store the selected pixel for highlighting
 
     def open_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open File", "", "DM4 Files (*.dm4);;All Files (*)")
@@ -116,25 +116,49 @@ class MainWindow(QMainWindow):
         if event.button() == 1 and event.modifiers() == Qt.ShiftModifier:
             pos = event.pos()
             x, y = int(pos.x()), int(pos.y())
-            ydata = self.data.eels_highloss.data[x, y]
 
-            spectrum_res = self.data.get_spectral_resolution()
-            spectrum_offset = self.data.get_offset()
-            x_values = np.array(range(len(ydata))) * spectrum_res + spectrum_offset
+            if self.selected_pixel_roi is None:
+                # Create the ROI for the first time
+                self.selected_pixel_roi = pg.RectROI([x - 0.5, y - 0.5], [1, 1], pen=pg.mkPen('r', width=2))
+                self.plotItem.addItem(self.selected_pixel_roi)
 
-            if self.spectrum_subwindow is None:
-                self.spectrum_plot = SpectrumPlot()
-                self.spectrum_subwindow = QMdiSubWindow()
-                self.spectrum_subwindow.setWidget(self.spectrum_plot)
-                self.mdi_area.addSubWindow(self.spectrum_subwindow)
-                self.spectrum_subwindow.show()
+                # Connect signal to update spectrum when ROI moves or resizes
+                self.selected_pixel_roi.sigRegionChanged.connect(self.update_spectrum_from_roi)
+            elif self.selected_pixel_roi.size()[0]>1 or self.selected_pixel_roi.size()[1]>1:
+                self.selected_pixel_roi.setSize([1,1])
+                self.selected_pixel_roi.setPos([x - 0.5, y - 0.5])
+            else:
+                # Just move the existing ROI
+                self.selected_pixel_roi.setPos([x - 0.5, y - 0.5])
 
-            self.spectrum_plot.update_plot(x_values, ydata, (x, y))
+            # Immediately update spectrum for the new ROI position
+            self.update_spectrum_from_roi()
 
-            if self.selected_pixel:
-                self.plotItem.removeItem(self.selected_pixel)
-            self.selected_pixel = pg.RectROI([x - 0.5, y - 0.5], [1, 1], pen=pg.mkPen('r', width=2))
-            self.plotItem.addItem(self.selected_pixel)
+    def update_spectrum_from_roi(self):
+        """Extract all spectra inside ROI and update the spectrum plot."""
+        if self.data is None or self.selected_pixel_roi is None:
+            return
+
+        # Extract the region of interest (ROI)
+        roi_mask = self.selected_pixel_roi.getArrayRegion(self.data.eels_highloss.data, self.correlogram, axes=(1,0))
+
+        if roi_mask is not None and roi_mask.size > 0:
+            summed_spectrum = np.sum(roi_mask, axis=(0, 1))
+        else:
+            summed_spectrum = np.zeros_like(self.data.eels_highloss.data[0, 0])
+
+        spectrum_res = self.data.get_spectral_resolution()
+        spectrum_offset = self.data.get_offset()
+        x_values = np.array(range(len(summed_spectrum))) * spectrum_res + spectrum_offset
+
+        if self.spectrum_subwindow is None:
+            self.spectrum_plot = SpectrumPlot()
+            self.spectrum_subwindow = QMdiSubWindow()
+            self.spectrum_subwindow.setWidget(self.spectrum_plot)
+            self.mdi_area.addSubWindow(self.spectrum_subwindow)
+            self.spectrum_subwindow.show()
+        pt = self.selected_pixel_roi.pos()
+        self.spectrum_plot.update_plot(x_values, summed_spectrum, pt.__reduce__()[1])
 
 
 class SpectrumPlot(QWidget):
@@ -160,5 +184,6 @@ class SpectrumPlot(QWidget):
 if __name__ == '__main__':
     mkQApp("Main")
     main_window = MainWindow()
+    main_window.load_data("D:\\OneDrive - Uniwersytet Jagielloński\\Studia\\python\\EELSpy\\pythonProject1\\tests\\reference\\STEM SI_eels_O_Mn_La_do_Ca.dm4")
     main_window.show()
     pg.exec()
