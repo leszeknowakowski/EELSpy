@@ -16,6 +16,15 @@ my_font.setBold(True)
 
 
 def set_plot_fonts(plot, color='w', font="Times", size=10):
+    """
+    Set fonts for the axis labels and ticks of a pyqtgraph plot.
+
+    Parameters:
+        plot (pyqtgraph.PlotItem): The plot to modify.
+        color (str): The color of the text.
+        font (str): The font family.
+        size (int): The font size.
+    """
     for label in ['left', 'right', 'top', 'bottom']:
         my_font = QFont(font, size, QFont.Bold)
         plot.getAxis(label).setTickFont(my_font)
@@ -23,25 +32,53 @@ def set_plot_fonts(plot, color='w', font="Times", size=10):
 
 
 class EELS:
+    """
+    Class for handling Electron Energy Loss Spectroscopy (EELS) data.
+    """
     def __init__(self, file):
+        """
+        Load EELS data from a file.
+
+        Parameters:
+            file (str): Path to the EELS data file.
+        """
         s = hs.load(file)
-        self.haadf = s[0]
-        self.eels_lowloss = s[1]
-        self.eels_highloss = s[2]
+        self.haadf = s[0]  # High-angle annular dark field image
+        self.eels_lowloss = s[1]  # Low-loss EELS spectrum
+        self.eels_highloss = s[2]  # High-loss EELS spectrum
 
     def get_spectral_resolution(self):
+        """
+        Get the energy loss spectral resolution.
+
+        Returns:
+            float: The spectral resolution in energy loss.
+        """
         return self.eels_lowloss.axes_manager["Energy loss"].scale
 
     def get_offset(self):
+        """
+        Get the energy loss offset.
+
+        Returns:
+            float: The energy loss offset.
+        """
         return self.eels_highloss.axes_manager["Energy loss"].offset
 
 
 class MainWindow(QMainWindow):
+    """
+    Main application window for EELS visualization.
+    """
     def __init__(self, *args, **kwargs):
+        """
+        Initialize the main window, menus, toolbars, status bar, and MDI area.
+        """
         super().__init__(*args, **kwargs)
         self.setWindowTitle('EELSpy')
         self.resize(1200, 1000)
 
+        # Setup menu bar
         self.menu_bar = QMenuBar(self)
         self.setMenuBar(self.menu_bar)
 
@@ -58,18 +95,22 @@ class MainWindow(QMainWindow):
         calculate_shift_action.triggered.connect(self.calculate_shift)
         file_menu.addAction(calculate_shift_action)
 
+        # Setup toolbar
         self.tool_bar = QToolBar("Main Toolbar", self)
         self.addToolBar(self.tool_bar)
         self.tool_bar.addAction(open_action)
         self.tool_bar.addAction(exit_action)
 
+        # Setup status bar
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
+        # Setup MDI area
         self.mdi_area = QMdiArea()
         self.setCentralWidget(self.mdi_area)
 
+        # Create main graphics window
         self.graphics_window = pg.GraphicsLayoutWidget()
         self.main_subwindow = QMdiSubWindow()
         self.main_subwindow.setWidget(self.graphics_window)
@@ -82,11 +123,20 @@ class MainWindow(QMainWindow):
         self.selected_pixel_roi = None  # Store the selected pixel for highlighting
 
     def open_file(self):
+        """
+        Open a file dialog to select an EELS data file and load it.
+        """
         file_name, _ = QFileDialog.getOpenFileName(self, "Open File", "", "DM4 Files (*.dm4);;All Files (*)")
         if file_name:
             self.load_data(file_name)
 
     def load_data(self, file):
+        """
+        Load EELS data from a file and display it as an image.
+
+        Parameters:
+            file (str): Path to the EELS data file.
+        """
         self.data = EELS(file)
         summed_data = np.sum(self.data.eels_highloss.data, axis=2)
         min_val, max_val = np.min(summed_data), np.max(summed_data)
@@ -96,6 +146,9 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Loaded file: {file}")
 
     def create_matrix(self, data):
+        """
+        Create a pyqtgraph image item from matrix data.
+        """
         self.corrMatrix = data
         self.correlogram = pg.ImageItem()
         self.correlogram.setImage(self.corrMatrix)
@@ -103,10 +156,13 @@ class MainWindow(QMainWindow):
         return self.correlogram
 
     def add_plot(self, item, parent, name=""):
+        """
+        Add a plot with an image item to a pyqtgraph parent widget.
+        """
         parent.clear()
         self.plotItem = parent.addPlot()
-        self.plotItem.setLabel("left", "y dimension", **font)
-        self.plotItem.setLabel("bottom", "x dimension", **font)
+        self.plotItem.setLabel("left", "y dimension")
+        self.plotItem.setLabel("bottom", "x dimension")
         self.plotItem.invertY(True)
         self.plotItem.setDefaultPadding(0.0)
         self.plotItem.addItem(item)
@@ -118,6 +174,9 @@ class MainWindow(QMainWindow):
         bar.setImageItem(item, insert_in=self.plotItem)
 
     def on_map_left_clicked(self, event):
+        """
+        Handle mouse clicks on the image to select a pixel region of interest (ROI).
+        """
         if self.data is None:
             return
         if event.button() == 1 and event.modifiers() == Qt.ShiftModifier:
@@ -125,49 +184,54 @@ class MainWindow(QMainWindow):
             x, y = int(pos.x()), int(pos.y())
 
             if self.selected_pixel_roi is None:
-                # Create the ROI for the first time
                 self.selected_pixel_roi = pg.RectROI([x - 0.5, y - 0.5], [1, 1], pen=pg.mkPen('r', width=2))
                 self.plotItem.addItem(self.selected_pixel_roi)
-
-                # Connect signal to update spectrum when ROI moves or resizes
                 self.selected_pixel_roi.sigRegionChanged.connect(self.update_spectrum_from_roi)
-            elif self.selected_pixel_roi.size()[0] > 1 or self.selected_pixel_roi.size()[1] > 1:
-                self.selected_pixel_roi.setSize([1, 1])
-                self.selected_pixel_roi.setPos([x - 0.5, y - 0.5])
             else:
-                # Just move the existing ROI
                 self.selected_pixel_roi.setPos([x - 0.5, y - 0.5])
-
-            # Immediately update spectrum for the new ROI position
             self.update_spectrum_from_roi()
 
     def update_spectrum_from_roi(self):
-        """Extract all spectra inside ROI and update the spectrum plot."""
+        """
+        Extracts all spectra inside the selected region of interest (ROI) and updates the spectrum plot.
+        If no data or ROI is available, the function returns without modification.
+        """
         if self.data is None or self.selected_pixel_roi is None:
             return
 
-        # Extract the region of interest (ROI)
+        # Extract the region of interest (ROI) from the high-loss EELS data
         roi_mask = self.selected_pixel_roi.getArrayRegion(self.data.eels_highloss.data, self.correlogram, axes=(1, 0))
 
         if roi_mask is not None and roi_mask.size > 0:
-            summed_spectrum = np.sum(roi_mask, axis=(1,0))
+            # Sum spectra across the ROI
+            summed_spectrum = np.sum(roi_mask, axis=(1, 0))
         else:
+            # If ROI is empty, create a zero spectrum
             summed_spectrum = np.zeros_like(self.data.eels_highloss.data[0, 0])
 
+        # Get spectral resolution and offset from the data
         spectrum_res = self.data.get_spectral_resolution()
         spectrum_offset = self.data.get_offset()
         x_values = np.array(range(len(summed_spectrum))) * spectrum_res + spectrum_offset
 
+        # Create a new spectrum window if it does not exist
         if self.spectrum_subwindow is None:
             self.spectrum_plot = SpectrumPlot()
             self.spectrum_subwindow = QMdiSubWindow()
             self.spectrum_subwindow.setWidget(self.spectrum_plot)
             self.mdi_area.addSubWindow(self.spectrum_subwindow)
             self.spectrum_subwindow.show()
+
+        # Get the position of the selected ROI and update the spectrum plot
         pt = self.selected_pixel_roi.pos()
         self.spectrum_plot.update_plot(x_values, summed_spectrum, pt.__reduce__()[1])
 
     def calculate_shift(self):
+        """
+        Initiates the shift calculation process using ShiftCalculator.
+        Displays progress in the status bar and connects the completion signal
+        to plot the shift map.
+        """
         self.worker = ShiftCalculator(self.data, self.spectrum_plot)
         self.worker.progress_signal.connect(lambda c, d: self.status_bar.showMessage(f"progress: {c} out of {d}"))
         self.worker.end_signal.connect(lambda time: self.status_bar.showMessage(f"done, elapsed time: {time}"))
@@ -175,75 +239,133 @@ class MainWindow(QMainWindow):
         self.worker.end_signal.connect(self.plot_shift_map)
 
     def plot_shift_map(self):
+        """
+        Generates and displays a shift map after the shift calculation process completes.
+        The shift map is displayed in a new subwindow within the MDI area.
+        """
         self.shift_window = pg.GraphicsLayoutWidget()
         self.shift_subwindow = QMdiSubWindow()
         self.shift_subwindow.setWidget(self.shift_window)
         self.mdi_area.addSubWindow(self.shift_subwindow)
         self.shift_subwindow.show()
 
+        # Create and add the shift map to the new window
         item = self.create_matrix(np.transpose(self.worker.intersects))
         self.add_plot(item, self.shift_window)
 
 
-
 class ShiftCalculator(QThread):
+    """
+    A worker thread that calculates the shift map for EELS spectra.
+    It iterates over the spectral data, fits edges and backgrounds, and stores the computed shifts.
+    """
     progress_signal = pyqtSignal(int, int)  # Signal to update progress
-    end_signal = pyqtSignal(float)
+    end_signal = pyqtSignal(float)  # Signal emitted when processing is complete
 
     def __init__(self, data, spectrum_plot):
+        """
+        Initializes the ShiftCalculator with spectral data and a spectrum plot object.
+
+        Parameters:
+        data : object
+            The dataset containing EELS spectra.
+        spectrum_plot : object
+            The plot widget for spectrum visualization.
+        """
         super().__init__()
         self.data = data
         self.spectrum_plot = spectrum_plot
         self.intersects = []
 
     def run(self):
+        """
+        Executes the shift calculation process.
+        Iterates over the spectra, fits edges and backgrounds, and computes intersections.
+        Emits progress updates and signals completion with elapsed time.
+        """
         tic = time.time()
         spectrum_res = self.data.get_spectral_resolution()
         spectrum_offset = self.data.get_offset()
         counter = 0
         data_length = len(self.data.eels_highloss.data) * len(self.data.eels_highloss.data[0])
-        for i,line in enumerate(self.data.eels_highloss.data):
+
+        for i, line in enumerate(self.data.eels_highloss.data):
             line_intersects = []
             for j, spectrum in enumerate(line):
-                    counter += 1
-                    x_values = np.array(range(len(spectrum))) * spectrum_res + spectrum_offset
-                    self.spectrum_plot.update_plot(x_values, spectrum, (i,j), update_roi=False)
-                    self.spectrum_plot.fit_edge(plot=False)
-                    if j==50 and i == 50:
-                        print("stop")
-                    intersect = self.spectrum_plot.fit_background(plot=False)
-                    if self.significant_signal():
-                        line_intersects.append((intersect-825.8)*100)
-                    else:
-                        line_intersects.append(0)
-                    self.progress_signal.emit(counter, data_length)  # Emit progress update
-                    time.sleep(0.001)
+                counter += 1
+                x_values = np.array(range(len(spectrum))) * spectrum_res + spectrum_offset
+                self.spectrum_plot.update_plot(x_values, spectrum, (i, j), update_roi=False)
+                self.spectrum_plot.fit_edge(plot=False)
+
+                if j == 50 and i == 50:
+                    print("stop")
+
+                intersect = self.spectrum_plot.fit_background(plot=False)
+                if self.significant_signal():
+                    line_intersects.append((intersect - 825.8) * 100)
+                else:
+                    line_intersects.append(0)
+
+                self.progress_signal.emit(counter, data_length)  # Emit progress update
+                time.sleep(0.001)
+
             self.intersects.append(line_intersects)
+
         toc = time.time()
         self.intersects = np.array(self.intersects)
         self.end_signal.emit(toc - tic)
 
     def significant_signal(self):
+        """
+        Determines whether the detected signal is significant compared to background noise.
+
+        Returns:
+        bool : True if the signal is significant, False otherwise.
+        """
         bg_noise = self.spectrum_plot.bg_fit_noise_level
         signal = self.spectrum_plot.egde_signal_strength
-        result=  bg_noise * 6 < signal
-        return result
+        return bg_noise * 6 < signal
 
 
 class LinearFitResult:
-    def __init__(self, slope, intercept):
-        self.slope = slope
-        self.intercept = intercept
+    """
+    Represents the result of a linear fit, storing the slope and intercept values.
+    """
+    def __init__(self, slope: float, intercept: float) -> None:
+        """
+        Initializes a LinearFitResult instance with a given slope and intercept.
+        """
+        self.slope: float = slope
+        self.intercept: float = intercept
 
-    def evaluate(self, x):
+    def evaluate(self, x: float) -> float:
+        """
+        Evaluates the linear function at a given x-value.
+        """
         return self.slope * x + self.intercept
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        Returns a string representation of the linear equation.
+        """
         return f"y = {self.slope:.6f}x + {self.intercept:.6f}"
 
 
 class SpectrumPlot(QWidget):
+    """
+    A widget for plotting and analyzing spectral data.
+
+    This class provides functionality to display spectra, fit background and edge regions,
+    determine intersection points, and save edge data.
+    """
+
     def __init__(self):
+        """
+        Initializes the SpectrumPlot widget.
+
+        Creates the main layout, plot widget, controls for background fitting,
+        intersection calculation, and saving edge data.
+        """
         super().__init__()
 
         # Main layout
@@ -312,6 +434,15 @@ class SpectrumPlot(QWidget):
         self.saved_edges = {}
 
     def update_plot(self, xaxis, energies, position, update_roi=True):
+        """
+        Updates the plot with new spectral data.
+
+        Args:
+            xaxis (array-like): X-axis values (e.g., energy in keV).
+            energies (array-like): Corresponding spectral intensities.
+            position (tuple): Pixel position label to display.
+            update_roi (bool, optional): Whether to update the ROIs (default: True).
+        """
         self.xaxis = xaxis
         self.spectrum = energies
         if self.spectrum_curve is not None:
@@ -324,7 +455,13 @@ class SpectrumPlot(QWidget):
             self.update_roi(xaxis, energies)
 
     def update_roi(self, xaxis, energies):
+        """
+        Updates or creates regions of interest (ROIs) for background and edge fitting.
 
+        Args:
+            xaxis (array-like): X-axis values.
+            energies (array-like): Corresponding spectral intensities.
+        """
         # Create ROIs if they don't exist
         if self.bg_roi is None:
             # Create background ROI around 20% of the x-axis range
@@ -382,6 +519,15 @@ class SpectrumPlot(QWidget):
         self.intersection_value.setText("")
 
     def fit_background(self, plot=True):
+        """
+        Fits a linear background to the selected region and optionally plots it.
+
+        Args:
+            plot (bool, optional): Whether to plot the fitted background (default: True).
+
+        Returns:
+            float or None: Intersection point if both background and edge fits are available.
+        """
         if self.xaxis is None or self.spectrum is None or self.bg_roi is None:
             return
 
@@ -423,14 +569,31 @@ class SpectrumPlot(QWidget):
             return intersection
 
     def on_bg_roi_changed(self):
+        """
+        Callback function for changes in the background ROI.
+        Does nothing, as the background fit is explicitly triggered by a button press.
+        """
         # Background fit must be explicitly triggered by button press
         pass
 
     def on_edge_roi_changed(self):
+        """
+        Callback function for changes in the edge ROI.
+        Automatically triggers the edge fitting process.
+        """
         # Automatically update edge fit when ROI changes
         self.fit_edge()
 
     def fit_edge(self, plot=True):
+        """
+        Fits a linear edge function to the selected region and optionally plots it.
+
+        Args:
+            plot (bool, optional): Whether to plot the fitted edge (default: True).
+
+        Returns:
+            float or None: Intersection point if both background and edge fits are available.
+        """
         if self.xaxis is None or self.spectrum is None or self.edge_roi is None:
             return
 
@@ -471,6 +634,9 @@ class SpectrumPlot(QWidget):
             return intersection
 
     def reset_background(self):
+        """
+        Resets the background fit and removes related graphical elements.
+        """
         if self.bg_fit_line is not None:
             self.plot_widget.removeItem(self.bg_fit_line)
             self.bg_fit_line = None
@@ -485,6 +651,15 @@ class SpectrumPlot(QWidget):
         self.intersection_value.setText("")
 
     def calculate_intersection(self, plot=True):
+        """
+        Calculates the intersection point between the background and edge fits.
+
+        Args:
+            plot (bool, optional): Whether to plot the intersection point (default: True).
+
+        Returns:
+            float or None: The intersection x-coordinate, or None if no valid intersection exists.
+        """
         if self.bg_fit is None or self.edge_fit is None:
             return
 
@@ -515,6 +690,9 @@ class SpectrumPlot(QWidget):
         return x_intersect
 
     def save_edge(self):
+        """
+        Saves the detected edge energy along with its associated ROIs.
+        """
         if not self.intersection_value.text():
             return
 
