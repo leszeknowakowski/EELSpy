@@ -265,7 +265,7 @@ class SpectrumPlot(QWidget):
 
         # Background fitting controls
         self.fit_bg_button = QPushButton("Fit Background")
-        self.fit_bg_button.clicked.connect(self.fit_background)
+        self.fit_bg_button.clicked.connect(lambda: self.fit_background(plot=True))
         controls_layout.addWidget(self.fit_bg_button, 0, 0)
 
         self.reset_bg_button = QPushButton("Reset Background")
