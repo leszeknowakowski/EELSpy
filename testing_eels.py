@@ -722,6 +722,6 @@ class SpectrumPlot(QWidget):
 if __name__ == '__main__':
     mkQApp("Main")
     main_window = MainWindow()
-    main_window.load_data("D:\\OneDrive - Uniwersytet Jagielloński\\Studia\\python\\EELSpy\\pythonProject1\\tests\\reference\\STEM SI_eels_O_Mn_La_do_Ca.dm4")
+    #main_window.load_data("D:\\OneDrive - Uniwersytet Jagielloński\\Studia\\python\\EELSpy\\pythonProject1\\tests\\reference\\STEM SI_eels_O_Mn_La_do_Ca.dm4")
     main_window.show()
     pg.exec()
