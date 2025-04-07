@@ -74,7 +74,6 @@ class EELS:
                     self.eels_lowloss = signal
                 elif self.eels_highloss is None:
                     self.eels_highloss = signal
-
         # Just in case: store all signals
         self.all_signals = self.signals
         #s = hs.load(file)
@@ -127,17 +126,17 @@ class MainWindow(QMainWindow):
         file_menu.addAction(open_action)
 
         save_action = QAction("Save", self)
-        save_action.triggered.connect(lambda : self.save_data("small_test_file", (1,5), (1,5)))
+        save_action.triggered.connect(lambda : self.save_data("small_test_file", (1,10), (1,10)))
         save_action.setShortcut("Ctrl+S")
         file_menu.addAction(save_action)
 
         exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(lambda: self.closeEvent(1))
         file_menu.addAction(exit_action)
 
         eels_menu = self.menu_bar.addMenu("EELS")
         calculate_shift_action = QAction("Calculate Shift", self)
-        calculate_shift_action.triggered.connect(self.calculate_shift)
+        calculate_shift_action.triggered.connect(self.shift_settings)
         eels_menu.addAction(calculate_shift_action)
 
         peak_setting_action = QAction("Peak Setting", self)
@@ -334,34 +333,50 @@ class MainWindow(QMainWindow):
         to plot the shift map.
         """
         # TODO: many fitting functions, especially peak functions
-        self.worker = ShiftCalculator(self.data, self.spectrum_plot)
+        type = self.get_shift_params()
+        self.worker = ShiftCalculator(self.data, self.spectrum_plot, type)
         self.worker.progress_signal.connect(lambda c, d: self.status_bar.showMessage(f"progress: {c} out of {d}"))
         self.worker.end_signal.connect(lambda time: self.status_bar.showMessage(f"done, elapsed time: {time}"))
         self.worker.start()
-        self.worker.end_signal.connect(lambda: self.plot_shift_map())
+        self.worker.end_signal.connect(lambda: self.plot_shift_map(type))
 
     def plot_shift_map(self, type="peak"):
         """
         Generates and displays a shift map after the shift calculation process completes.
-        The shift map is displayed in a new subwindow within the MDI area.
+        A separate shift map window is created for each type.
         """
-        # TODO:  dispatch from main EELS image plot!
-        self.shift_window = pg.GraphicsLayoutWidget()
-        self.shift_subwindow = QMdiSubWindow()
-        self.shift_subwindow.setWidget(self.shift_window)
-        self.shift_window.setWindowTitle(f"{self.filename} EELS {type} shift map")
-        self.spectrum_subwindow.setWindowTitle(f'{type} shift image')
-        self.mdi_area.addSubWindow(self.shift_subwindow)
-        self.shift_subwindow.show()
+        if not hasattr(self, 'shift_windows'):
+            self.shift_windows = {}
 
-        # Create and add the shift map to the new window
+        #if type in self.shift_windows:
+        #    # If the window for this type already exists, bring it to front
+        #    self.shift_windows[type].show()
+        #    self.shift_windows[type].raise_()
+        #    return
+
+        # Create a new widget and subwindow for this type
+        shift_window = pg.GraphicsLayoutWidget()
+        shift_subwindow = QMdiSubWindow()
+        shift_subwindow.setWidget(shift_window)
+        shift_subwindow.setWindowTitle(f"{self.filename} EELS {type} shift map")
+        self.mdi_area.addSubWindow(shift_subwindow)
+        shift_subwindow.show()
+
+        # Store them so they can be referenced later
+        self.shift_windows[type] = shift_subwindow
+
+        # Generate the data and add the plot
         if type == "edge":
             item = self.create_matrix(np.transpose(self.worker.intersects))
         elif type == "peak":
             item = self.create_matrix(np.transpose(self.worker.peaks_maximums))
         elif type == "maximum":
             item = self.create_matrix(np.transpose(self.worker.maximums))
-        self.add_plot(item, self.shift_window, limits=(-1,1), rounding=0.01, label="shift")
+        else:
+            print(f"Unknown shift type: {type}")
+            return
+
+        self.add_plot(item, shift_window, limits=(-1, 1), rounding=0.01, label="shift")
 
     def get_peak_fitter(self):
         try:
@@ -371,6 +386,14 @@ class MainWindow(QMainWindow):
             fitter = self.peak_settings_window.get_peak_fitter()
         return fitter
 
+    def get_shift_params(self):
+        try:
+            shifter = self.shift_settings_window.get_shift_settings()
+        except:
+            self.shift_settings()
+            shifter = self.shift_settings_window.get_shift_settings()
+        return shifter
+
     def peak_settings(self):
         self.peak_settings_window = PeakFitterConfigWindow()
         self.peak_settings_window.show()
@@ -378,21 +401,30 @@ class MainWindow(QMainWindow):
     def shift_settings(self):
         self.shift_settings_window = ShiftCalculatorSettings()
         self.shift_settings_window.show()
+        self.shift_settings_window.run_button.clicked.connect(self.calculate_shift)
 
+    def closeEvent(self, e):
+        for window in QApplication.topLevelWidgets():
+            window.close()
 
 class ShiftCalculatorSettings(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Shift Calculator Settings")
         self.setGeometry(100, 100, 300, 250)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
         form_layout = QFormLayout()
 
         # Dropdown for model selection
         self.shift_type_box = QComboBox()
-        self.shift_type_box.addItems(["edge", "peak"])
+        self.shift_type_box.addItems(["edge", "peak", "maximum"])
         form_layout.addRow("Calcualte shift regarding to:", self.shift_type_box)
+
+        # run button
+        self.run_button = QPushButton("Run")
+        form_layout.addRow(self.run_button)
 
         layout.addLayout(form_layout)
         self.setLayout(layout)
@@ -400,12 +432,14 @@ class ShiftCalculatorSettings(QWidget):
     def get_shift_settings(self):
         return self.shift_type_box.currentText()
 
+
 class PeakFitterConfigWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PeakFitter Configuration")
         self.setGeometry(100, 100, 300, 250)
         self.peak_fitter = None
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
         form_layout = QFormLayout()
@@ -430,10 +464,10 @@ class PeakFitterConfigWindow(QWidget):
         form_layout.addRow(self.verbose_check)
 
         # Button to create PeakFitter
-        self.create_button = QPushButton("Create PeakFitter")
-        self.create_button.clicked.connect(self.create_peak_fitter)
+        #self.create_button = QPushButton("Create PeakFitter")
+        #self.create_button.clicked.connect(self.create_peak_fitter)
         layout.addLayout(form_layout)
-        layout.addWidget(self.create_button)
+        #layout.addWidget(self.create_button)
 
         # Label to show result
         self.status_label = QLabel("")
@@ -480,16 +514,18 @@ class ShiftCalculator(QThread):
     progress_signal = pyqtSignal(int, int)
     end_signal = pyqtSignal(float)
 
-    def __init__(self, data, spectrum_plot):
+    def __init__(self, data, spectrum_plot, type):
         super().__init__()
         self.data = data
         self.spectrum_plot = spectrum_plot
         self.intersects = []
         self.maximums = []
         self.peaks_maximums = []
+        self.type = type
+
 
     def run(self):
-        self._calculate_shift(mode="peak")
+        self._calculate_shift(self.type)
 
     def _calculate_shift(self, mode):
         """
@@ -505,18 +541,20 @@ class ShiftCalculator(QThread):
         counter = 0
         data_array = self.data.eels_highloss.data
         data_length = len(data_array) * len(data_array[0])
-        reference_peak_center = self.spectrum_plot.saved_peaks['Peak_1']['energy'] if mode in ("max", "peak") else None #change hard coding!!
+        reference_peak_center = self.spectrum_plot.saved_peaks['Peak_1']['energy'] if mode in ("maximum", "peak") else None #change hard coding!!
+        reference_edge_center = self.spectrum_plot.saved_edges['Edge_1']['energy'] if mode in ("edge") else None ## change hard coding!!
 
         result_matrix = []
 
         for i, line in enumerate(data_array):
             line_results = []
             for j, spectrum in enumerate(line):
+                spectrum = spectrum/np.max(spectrum)
                 counter += 1
                 x_values = np.array(range(len(spectrum))) * spectrum_res + spectrum_offset
                 self.spectrum_plot.update_plot(x_values, spectrum, (i, j), update_roi=False, plot=False)
 
-                if mode == "max":
+                if mode == "maximum":
                     self.spectrum_plot.fit_background(plot=False)
                     max_val = self.spectrum_plot.find_max()
                     value = (reference_peak_center - max_val) if self.significant_signal("peak") else np.nan
@@ -538,14 +576,15 @@ class ShiftCalculator(QThread):
                     print("stop")
 
                 line_results.append(value)
-                self.progress_signal.emit(counter, data_length)
-                time.sleep(0.0005 if mode in ("max", "peak") else 0.001)
+                #time.sleep(0.0005 if mode in ("maximum", "peak") else 0.001)
+            self.progress_signal.emit(counter, data_length)
+
 
             result_matrix.append(line_results)
 
         result_matrix = np.array(result_matrix)
 
-        if mode == "max":
+        if mode == "maximum":
             self.maximums = result_matrix
         elif mode == "peak":
             self.peaks_maximums = result_matrix
@@ -559,7 +598,7 @@ class ShiftCalculator(QThread):
         self._calculate_shift("peak")
 
     def maximum_calculator(self):
-        self._calculate_shift("max")
+        self._calculate_shift("maximum")
 
     def edge_calculation(self):
         self._calculate_shift("edge")
@@ -643,14 +682,21 @@ class PeakFitter:
 
     def _initial_guess(self, x, y):
         peaks, _ = find_peaks(y, prominence=self.peak_prominence)
-        if len(peaks) == 0:
-            raise ValueError("No peaks found for initial guess.")
+        try:
+            if len(peaks) == 0:
+                raise ValueError("No peaks found for initial guess.")
 
-        idx = peaks[0]
-        cen = x[idx]
-        amp = y[idx]
-        wid = (max(x) - min(x)) / 10
-        y0 = min(y)
+            idx = peaks[0]
+            cen = x[idx]
+            amp = np.abs(y[idx])
+            wid = (max(x) - min(x)) / 10
+            y0 = min(y)
+        except ValueError:
+            idx = int(len(x)/2)
+            cen = x[idx]
+            amp = np.abs(y[idx])
+            wid = (max(x) - min(x)) / 10
+            y0 = min(y)
 
         if self.model in ['gaussian', 'lorentzian']:
             return [amp, cen, wid, y0]
@@ -718,6 +764,7 @@ class PeakFitter:
         peak_info : dict
             Computed peak parameters (center, height, FWHM, area, etc.)
         """
+        from  numpy import inf
         if self.model not in self.model_funcs:
             raise ValueError(f"Unsupported model: {self.model}")
 
@@ -731,12 +778,24 @@ class PeakFitter:
             if len(xdata) < 5:
                 raise ValueError("ROI too narrow or no data in range.")
 
+
         p0 = self._initial_guess(xdata, ydata)
+
         prev = np.array(p0)
 
         for i in range(self.max_iter):
             try:
-                popt, _ = curve_fit(func, xdata, ydata, p0=prev)
+                if self.model in ['gaussian', 'lorentzian']:
+                    bounds = ([0, -inf, 0, -inf], [inf, inf, inf, inf])  # a > 0, w > 0
+                elif self.model == 'voigt':
+                    bounds = ([0, -inf, 0, 0, -inf], [inf, inf, inf, inf, inf])  # a > 0, s > 0, g > 0
+                elif self.model == 'pseudo_voigt':
+                    bounds = ([0, -inf, 0, 0, -inf], [inf, inf, inf, 1, inf])  # a > 0, w > 0, 0 <= eta <= 1
+                else:
+                    raise ValueError(f"Unsupported model: {self.model}")
+                popt, _ = curve_fit(func, xdata, ydata, p0=prev, bounds=bounds)
+                #except ValueError:
+                #    print('error')
             except RuntimeError:
                 raise FitNotConverged("Fit did not converge.")
 
@@ -879,7 +938,7 @@ class SpectrumPlot(QWidget):
             update_roi (bool, optional): Whether to update the ROIs (default: True).
         """
         self.xaxis = xaxis
-        self.spectrum = energies
+        self.spectrum = energies / np.max(energies)
         if plot:
             if self.spectrum_curve is not None:
                 self.spectrum_curve.setData(xaxis, energies)
@@ -1072,10 +1131,11 @@ class SpectrumPlot(QWidget):
             intersection = self.calculate_intersection(plot)
             return intersection
 
-    def fit_peak(self, model='pseudo_voigt', plot=True, view_center=True):
+    def fit_peak(self, plot=True, view_center=True):
 
         #fitter = PeakFitter(model, max_iter=100, verbose=True)
         fitter = self.main_window.get_peak_fitter()
+
         try:
             popt, yfit, xfit, yroi, info = fitter.fit(self.xaxis, self.spectrum, roi=self.edge_roi.getRegion())
             self.peak_signal_strength = fitter.amplitude
@@ -1104,7 +1164,7 @@ class SpectrumPlot(QWidget):
             }
         except FitNotConverged:
             center = 'NaN'
-            #print("Fit not converged")
+            print("Fit not converged")
             if view_center:
                 self.max_peak_value.setText(center)
         return {
@@ -1129,9 +1189,17 @@ class SpectrumPlot(QWidget):
 
         self.intersection_value.setText("")
 
-    def find_maximum(self, ):
-        max = np.max(self.spectrum)
-        return max
+    def find_max(self):
+        min_x, max_x = self.edge_roi.getRegion()
+
+        # Find the indices that fall within the region
+        mask = (self.xaxis >= min_x) & (self.xaxis <= max_x)
+        x_values = self.xaxis[mask]
+        y_values = self.spectrum[mask]
+
+        indice_max = np.argmax(y_values)
+        x_at_max = x_values[indice_max]
+        return x_at_max
 
     def calculate_intersection(self, plot=True):
         """
